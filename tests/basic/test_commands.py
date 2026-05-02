@@ -483,6 +483,64 @@ class TestCommands(TestCase):
             commands.execute("commit", commit_message)
             self.assertFalse(repo.is_dirty())
 
+    async def test_cmd_commit_staged(self):
+        with GitTemporaryDirectory():
+            fname_staged = "staged.txt"
+            fname_unstaged = "unstaged.txt"
+            with open(fname_staged, "w") as f:
+                f.write("staged initial")
+            with open(fname_unstaged, "w") as f:
+                f.write("unstaged initial")
+
+            repo = git.Repo()
+            repo.git.add(fname_staged, fname_unstaged)
+            repo.git.commit("-m", "initial")
+
+            io = InputOutput(pretty=False, fancy_input=False, yes=True)
+            coder = await Coder.create(self.GPT35, None, io)
+            commands = Commands(io, coder)
+
+            # Modify both files, but only stage one
+            with open(fname_staged, "w") as f:
+                f.write("staged modified")
+            with open(fname_unstaged, "w") as f:
+                f.write("unstaged modified")
+            repo.git.add(fname_staged)
+
+            self.assertTrue(repo.is_dirty())
+            commands.execute("commit-staged", "Staged only commit")
+
+            # Staged file should be committed, unstaged still dirty
+            self.assertTrue(repo.is_dirty())
+            diff_output = repo.git.diff("HEAD", fname_unstaged)
+            self.assertIn("unstaged modified", diff_output)
+
+            latest_commit = repo.head.commit
+            self.assertEqual(latest_commit.message.strip(), "Staged only commit")
+
+    async def test_cmd_commit_staged_no_changes(self):
+        with GitTemporaryDirectory():
+            fname = "test.txt"
+            with open(fname, "w") as f:
+                f.write("test")
+
+            repo = git.Repo()
+            repo.git.add(fname)
+            repo.git.commit("-m", "initial")
+
+            io = InputOutput(pretty=False, fancy_input=False, yes=True)
+            coder = await Coder.create(self.GPT35, None, io)
+            commands = Commands(io, coder)
+
+            # Make an unstaged change only
+            with open(fname, "w") as f:
+                f.write("new")
+
+            initial_commit = repo.head.commit.hexsha
+            commands.execute("commit-staged", "")
+            # No new commit should have been created
+            self.assertEqual(repo.head.commit.hexsha, initial_commit)
+
     async def test_cmd_add_from_outside_root(self):
         with ChdirTemporaryDirectory() as tmp_dname:
             root = Path("root")

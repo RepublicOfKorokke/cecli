@@ -722,3 +722,74 @@ class TestRepo:
             assert system_msg_content.startswith(
                 prefix
             ), "system_prompt_prefix should be prepended to the system prompt"
+
+    def test_has_staged_changes_true(self):
+        with GitTemporaryDirectory():
+            raw_repo = git.Repo()
+            fname = Path("staged.txt")
+            fname.write_text("staged content")
+            raw_repo.git.add(str(fname))
+
+            git_repo = GitRepo(InputOutput(), None, ".")
+            assert git_repo.has_staged_changes() is True
+
+    def test_has_staged_changes_false(self):
+        with GitTemporaryDirectory():
+            raw_repo = git.Repo()
+            fname = Path("unstaged.txt")
+            fname.write_text("unstaged content")
+            # File is not staged
+
+            git_repo = GitRepo(InputOutput(), None, ".")
+            assert git_repo.has_staged_changes() is False
+
+    def test_get_diffs_staged_only(self):
+        with GitTemporaryDirectory():
+            raw_repo = git.Repo()
+            fname = Path("foo.txt")
+            fname.write_text("initial\n")
+            raw_repo.git.add(str(fname))
+            raw_repo.git.commit("-m", "initial")
+
+            fname.write_text("staged\n")
+            raw_repo.git.add(str(fname))
+            fname.write_text("unstaged\n")
+
+            git_repo = GitRepo(InputOutput(), None, ".")
+            staged_diffs = git_repo.get_diffs(staged_only=True)
+            all_diffs = git_repo.get_diffs()
+
+            assert "staged" in staged_diffs
+            assert "unstaged" not in staged_diffs
+
+            assert "staged" in all_diffs
+            assert "unstaged" in all_diffs
+
+    async def test_commit_staged_only_commits_index(self):
+        with GitTemporaryDirectory():
+            raw_repo = git.Repo()
+            raw_repo.config_writer().set_value("user", "name", "Test User").release()
+            raw_repo.config_writer().set_value("user", "email", "test@example.com").release()
+
+            staged_file = Path("staged.txt")
+            unstaged_file = Path("unstaged.txt")
+            staged_file.write_text("staged initial\n")
+            unstaged_file.write_text("unstaged initial\n")
+            raw_repo.git.add(str(staged_file), str(unstaged_file))
+            raw_repo.git.commit("-m", "initial")
+
+            # Stage one file, modify another unstaged
+            staged_file.write_text("staged modified\n")
+            raw_repo.git.add(str(staged_file))
+            unstaged_file.write_text("unstaged modified\n")
+
+            git_repo = GitRepo(InputOutput(), None, ".")
+            commit_result = await git_repo.commit(staged_only=True, message="staged only")
+            assert commit_result is not None
+
+            # Verify only staged changes were committed
+            latest_commit = raw_repo.head.commit
+            assert latest_commit.message.strip() == "staged only"
+
+            diff_output = raw_repo.git.diff("HEAD", str(unstaged_file))
+            assert "unstaged modified" in diff_output

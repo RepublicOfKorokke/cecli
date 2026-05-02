@@ -197,7 +197,7 @@ class GitRepo:
         if self.repo:
             self.repo.close()
 
-    async def commit(self, fnames=None, context=None, message=None, coder_edits=False, coder=None):
+    async def commit(self, fnames=None, context=None, message=None, coder_edits=False, coder=None, staged_only=False):
         """
         Commit the specified files or all dirty files if none are specified.
 
@@ -210,6 +210,8 @@ class GitRepo:
                                           This affects attribution logic.
             coder (Coder, optional): The Coder instance, used for config and model info.
                                      Defaults to None.
+            staged_only (bool, optional): If True and fnames is empty, commit only changes that
+                                          are already staged in the index. Defaults to False.
 
         Returns:
             tuple(str, str) or None: The commit hash and commit message if successful,
@@ -267,10 +269,13 @@ class GitRepo:
         - User commit with explicit no-committer: coder_edits=False,
           --no-attribute-committer -> Author=You, Committer=You
         """
-        if not fnames and not self.repo.is_dirty():
-            return
+        if not fnames:
+            if staged_only and not self.has_staged_changes():
+                return
+            if not staged_only and not self.repo.is_dirty():
+                return
 
-        diffs = self.get_diffs(fnames)
+        diffs = self.get_diffs(fnames, staged_only=staged_only)
         if not diffs:
             return
 
@@ -354,7 +359,7 @@ class GitRepo:
                 except ANY_GIT_ERROR as err:
                     self.io.tool_error(f"Unable to add {fname}: {err}")
             cmd += ["--"] + fnames
-        else:
+        elif not staged_only:
             cmd += ["-a"]
 
         original_user_name = self.repo.git.config("--get", "user.name")
@@ -450,7 +455,7 @@ class GitRepo:
         self.io.start_spinner(self.io.last_spinner_text, update_last_text=False)
         return commit_message
 
-    def get_diffs(self, fnames=None):
+    def get_diffs(self, fnames=None, staged_only=False):
         # We always want diffs of index and working dir
 
         current_branch_has_commits = False
@@ -474,8 +479,18 @@ class GitRepo:
 
         try:
             if current_branch_has_commits:
-                args = ["HEAD", "--"] + list(fnames)
+                if staged_only:
+                    args = ["--cached", "HEAD", "--"] + list(fnames)
+                else:
+                    args = ["HEAD", "--"] + list(fnames)
                 diffs += self.repo.git.diff(*args, stdout_as_string=False).decode(
+                    self.io.encoding, "replace"
+                )
+                return diffs
+
+            if staged_only:
+                index_args = ["--cached", "--"] + list(fnames)
+                diffs += self.repo.git.diff(*index_args, stdout_as_string=False).decode(
                     self.io.encoding, "replace"
                 )
                 return diffs
@@ -929,6 +944,21 @@ class GitRepo:
             return True
 
         return self.repo.is_dirty(path=path)
+
+    def has_staged_changes(self, path=None):
+        """Check whether the repository index contains staged changes."""
+        if not self.repo:
+            return False
+
+        args = ["--cached", "--name-only"]
+        if path:
+            args += ["--", str(path)]
+
+        try:
+            staged = self.repo.git.diff(*args)
+            return bool(staged.strip())
+        except ANY_GIT_ERROR:
+            return False
 
     def get_head_commit(self):
         try:
