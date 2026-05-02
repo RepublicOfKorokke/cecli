@@ -777,6 +777,9 @@ async def main_async(argv=None, input=None, output=None, force_git_root=None, re
     io.tool_output(cmd_line, log_only=True)
     is_first_run = is_first_run_of_new_version(io, verbose=args.verbose)
     await check_and_load_imports(io, is_first_run, verbose=args.verbose)
+    from cecli.helpers.model_providers import reload_custom_providers
+
+    reload_custom_providers(args.custom_providers_file)
     register_models(git_root, args.model_settings_file, io, verbose=args.verbose)
     register_litellm_models(git_root, args.model_metadata_file, io, verbose=args.verbose)
     if args.list_models:
