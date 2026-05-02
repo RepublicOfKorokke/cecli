@@ -114,6 +114,15 @@ def get_parser(default_config_files, git_root):
         help="Specify a file with context window and costs for unknown models",
     ).complete = shtab.FILE
     group.add_argument(
+        "--custom-providers-file",
+        metavar="CUSTOM_PROVIDERS_FILE",
+        default=None,
+        help=(
+            "Specify a JSON file with custom OpenAI-compatible provider definitions"
+            " (default: ~/.cecli/custom-providers.json)"
+        ),
+    ).complete = shtab.FILE
+    group.add_argument(
         "--alias",
         action="append",
         metavar="ALIAS:MODEL",

@@ -21,7 +21,7 @@ from cecli.dump import dump
 from cecli.exceptions import LiteLLMExceptions
 from cecli.helpers import nested
 from cecli.helpers.file_searcher import generate_search_path_list, handle_core_files
-from cecli.helpers.model_providers import ModelProviderManager
+from cecli.helpers.model_providers import ModelProviderManager, is_custom_provider
 from cecli.helpers.nested import deep_merge
 from cecli.helpers.requests import model_request_parser
 from cecli.llm import litellm
@@ -832,6 +832,15 @@ class Model(ModelSettings):
 
     def _apply_provider_defaults(self):
         provider = (self.info.get("litellm_provider") or "").lower()
+
+        # Fallback: detect custom provider from model name prefix when metadata is empty
+        if not provider and "/" in self.name:
+            potential_provider = self.name.split("/", 1)[0]
+            if is_custom_provider(potential_provider):
+                provider = potential_provider
+                self.info = self.info.copy() if self.info else {}
+                self.info["litellm_provider"] = provider
+
         self.litellm_provider = provider or None
         if not provider:
             return
@@ -839,6 +848,17 @@ class Model(ModelSettings):
         if not provider_config:
             return
         self._ensure_extra_params_dict()
+
+        # Custom providers: force LiteLLM to use generic OpenAI handler
+        if is_custom_provider(provider):
+            self.extra_params["custom_llm_provider"] = "openai"
+            base_url = model_info_manager.provider_manager.get_provider_base_url(provider)
+            if base_url:
+                self.extra_params["api_base"] = base_url
+            api_key = model_info_manager.provider_manager._get_api_key(provider)
+            self.extra_params["api_key"] = api_key or "not-needed"
+            return
+
         self.extra_params.setdefault("custom_llm_provider", provider)
         if provider_config.get("supports_stream") is False:
             self.streaming = False
@@ -918,6 +938,15 @@ class Model(ModelSettings):
             provider = pieces[0]
         else:
             provider = None
+
+        # Custom providers: validate the configured env var directly
+        if provider and is_custom_provider(provider):
+            provider_keys = model_info_manager.provider_manager.get_required_api_keys(provider)
+            for env_var in provider_keys:
+                if os.environ.get(env_var):
+                    return dict(keys_in_environment=[env_var], missing_keys=[])
+            return dict(keys_in_environment=False, missing_keys=provider_keys)
+
         keymap = dict(
             openrouter="OPENROUTER_API_KEY",
             openai="OPENAI_API_KEY",
@@ -1144,7 +1173,13 @@ class Model(ModelSettings):
                 if message.get("content"):
                     msg_trunc = message.get("content")[:30]
                 print(f"{msg_role} ({len(msg_content)}): {msg_trunc}")
-        kwargs = dict(model=self.name, stream=stream)
+        effective_model = self.name
+        if "/" in self.name:
+            provider = self.name.split("/", 1)[0]
+            if is_custom_provider(provider):
+                effective_model = self.name.split("/", 1)[1]
+
+        kwargs = dict(model=effective_model, stream=stream)
 
         kwargs["drop_params"] = True
 

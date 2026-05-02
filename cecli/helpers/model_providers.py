@@ -24,6 +24,7 @@ import requests
 from cecli.helpers.file_searcher import handle_core_files
 
 RESOURCE_FILE = "providers.json"
+_CUSTOM_PROVIDERS_FILE_PATH: Optional[Path] = None
 _PROVIDERS_REGISTERED = False
 _CUSTOM_HANDLERS: Dict[str, "Any"] = {}
 
@@ -253,6 +254,28 @@ def _deep_merge(base: Dict, override: Dict) -> Dict:
         else:
             result[key] = deepcopy(value)
     return result
+
+
+def _get_custom_providers_file() -> Path:
+    """Return the effective custom providers file path."""
+    if _CUSTOM_PROVIDERS_FILE_PATH is not None:
+        return _CUSTOM_PROVIDERS_FILE_PATH
+    return handle_core_files(Path.home() / ".cecli" / "custom-providers.json")
+
+
+def _load_custom_provider_configs() -> Dict[str, Dict]:
+    """Load custom provider configurations from the user's custom-providers.json file."""
+    configs: Dict[str, Dict] = {}
+    try:
+        file_path = _get_custom_providers_file()
+        if file_path.exists():
+            data = json.loads(file_path.read_text())
+            if isinstance(data, dict):
+                for provider, config in data.items():
+                    configs[provider] = deepcopy(config)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    return configs
 
 
 def _load_provider_configs() -> Dict[str, Dict]:
@@ -579,6 +602,71 @@ def ensure_litellm_providers_registered() -> None:
     for slug, cfg in PROVIDER_CONFIGS.items():
         _register_provider_with_litellm(slug, cfg)
     _PROVIDERS_REGISTERED = True
+
+
+def set_custom_providers_file(file_path: Optional[str]) -> None:
+    """Set the path to the custom providers JSON file.
+
+    Args:
+        file_path: Absolute or relative path to the JSON file. None resets to default.
+    """
+    global _CUSTOM_PROVIDERS_FILE_PATH
+    if file_path is None:
+        _CUSTOM_PROVIDERS_FILE_PATH = None
+    else:
+        _CUSTOM_PROVIDERS_FILE_PATH = Path(file_path).expanduser().resolve()
+
+
+def reload_custom_providers(file_path: Optional[str] = None) -> Dict[str, Dict]:
+    """Reload custom providers from disk and merge them into runtime state.
+
+    Args:
+        file_path: Optional override path. If None, uses the currently configured path
+                   or falls back to the default ~/.cecli/custom-providers.json.
+
+    Returns:
+        Dict of loaded custom provider configs.
+    """
+    if file_path is not None:
+        set_custom_providers_file(file_path)
+
+    custom = _load_custom_provider_configs()
+
+    # Merge into global PROVIDER_CONFIGS
+    for slug, cfg in custom.items():
+        PROVIDER_CONFIGS[slug] = deepcopy(cfg)
+
+    # Sync into any existing ModelProviderManager instances
+    try:
+        from cecli.models import model_info_manager
+        for slug, cfg in custom.items():
+            model_info_manager.provider_manager.provider_configs[slug] = deepcopy(cfg)
+    except Exception:
+        pass
+
+    # Register with LiteLLM if available
+    for slug, cfg in custom.items():
+        _register_provider_with_litellm(slug, cfg)
+
+    return custom
+
+
+def is_custom_provider(provider: Optional[str]) -> bool:
+    """Check whether a provider slug is a user-defined custom provider."""
+    if not provider:
+        return False
+    custom = _load_custom_provider_configs()
+    return provider in custom
+
+
+def _get_builtin_provider_names() -> set[str]:
+    """Return the set of built-in provider slugs from the packaged JSON file."""
+    try:
+        resource = importlib_resources.files("cecli.resources").joinpath(RESOURCE_FILE)
+        data = json.loads(resource.read_text())
+        return set(data.keys())
+    except Exception:
+        return set()
 
 
 _NUMBER_RE = re.compile("-?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?")
