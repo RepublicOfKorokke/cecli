@@ -46,38 +46,67 @@ async def test_regenerate_removes_last_assistant():
 
 
 @pytest.mark.asyncio
-async def test_regenerate_no_assistant_error():
+async def test_regenerate_no_user_error():
     coder, io = await _create_coder()
     commands = Commands(io, coder)
     manager = ConversationService.get_manager(coder)
 
-    manager.add_message({"role": "user", "content": "Hello"}, tag=MessageTag.CUR)
+    # Only assistant messages, no user prompt
+    manager.add_message(
+        {"role": "assistant", "content": "Hi there"}, tag=MessageTag.CUR
+    )
 
     with mock.patch.object(io, "tool_error") as mock_tool_error:
         await commands.execute("regenerate", "")
         mock_tool_error.assert_called_once_with(
-            "No assistant response found in the current conversation to regenerate."
+            "No user message found in the current conversation to regenerate from."
         )
 
     assert getattr(coder, "_regenerate_next", False) is False
 
 
 @pytest.mark.asyncio
-async def test_regenerate_ignores_done_messages():
+async def test_regenerate_empty_response():
+    """When there is no assistant response (empty response), should still regenerate."""
     coder, io = await _create_coder()
     commands = Commands(io, coder)
     manager = ConversationService.get_manager(coder)
 
-    manager.add_message(
-        {"role": "assistant", "content": "Old response"}, tag=MessageTag.DONE
-    )
     manager.add_message({"role": "user", "content": "Hello"}, tag=MessageTag.CUR)
+    # No assistant message added
 
-    with mock.patch.object(io, "tool_error") as mock_tool_error:
+    with mock.patch.object(io, "tool_output"):
         await commands.execute("regenerate", "")
-        mock_tool_error.assert_called_once_with(
-            "No assistant response found in the current conversation to regenerate."
-        )
+
+    cur = manager.get_messages_dict(MessageTag.CUR)
+    assert len(cur) == 1
+    assert cur[0]["role"] == "user"
+    assert cur[0]["content"] == "Hello"
+    assert getattr(coder, "_regenerate_next", False) is True
+
+
+@pytest.mark.asyncio
+async def test_regenerate_multiple_trailing_assistants():
+    """Remove multiple assistant messages after the last user message."""
+    coder, io = await _create_coder()
+    commands = Commands(io, coder)
+    manager = ConversationService.get_manager(coder)
+
+    manager.add_message({"role": "user", "content": "Hello"}, tag=MessageTag.CUR)
+    manager.add_message(
+        {"role": "assistant", "content": "Response 1"}, tag=MessageTag.CUR
+    )
+    manager.add_message(
+        {"role": "assistant", "content": "Response 2"}, tag=MessageTag.CUR
+    )
+
+    with mock.patch.object(io, "tool_output"):
+        await commands.execute("regenerate", "")
+
+    cur = manager.get_messages_dict(MessageTag.CUR)
+    assert len(cur) == 1
+    assert cur[0]["role"] == "user"
+    assert cur[0]["content"] == "Hello"
 
 
 @pytest.mark.asyncio
