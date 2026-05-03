@@ -14,39 +14,31 @@ class RegenerateCommand(BaseCommand):
         manager = ConversationService.get_manager(coder)
         cur_messages = manager.get_tag_messages(MessageTag.CUR)
 
-        last_assistant_msg = None
-        for msg in reversed(cur_messages):
-            if msg.message_dict.get("role") == "assistant":
-                last_assistant_msg = msg
+        # Find the last user message by scanning from the end
+        last_user_index = None
+        for i, msg in enumerate(reversed(cur_messages)):
+            if msg.message_dict.get("role") == "user":
+                last_user_index = len(cur_messages) - 1 - i
                 break
 
-        if last_assistant_msg is None:
-            io.tool_error("No assistant response found in the current conversation to regenerate.")
+        if last_user_index is None:
+            io.tool_error(
+                "No user message found in the current conversation to regenerate from."
+            )
             return format_command_result(
-                io, "regenerate", "No assistant response found to regenerate"
+                io, "regenerate", "No user message found to regenerate from"
             )
 
-        removed = manager.remove_message(last_assistant_msg)
-        if not removed:
-            io.tool_error("Failed to remove the last assistant response.")
-            return format_command_result(
-                io, "regenerate", "Failed to remove assistant response"
-            )
+        # Remove all messages after the last user message (trailing assistants)
+        messages_to_remove = cur_messages[last_user_index + 1 :]
+        for msg in messages_to_remove:
+            manager.remove_message(msg)
 
         # Show a preview of the user message being regenerated
-        cur_messages = manager.get_tag_messages(MessageTag.CUR)
-        last_user_msg = None
-        for msg in reversed(cur_messages):
-            if msg.message_dict.get("role") == "user":
-                last_user_msg = msg
-                break
-
-        if last_user_msg:
-            content = last_user_msg.message_dict.get("content", "")
-            preview = content[:200] + "..." if len(content) > 200 else content
-            io.tool_output(f"Regenerating response to: {preview}")
-        else:
-            io.tool_output("Last assistant response removed. Regenerating...")
+        last_user_msg = cur_messages[last_user_index]
+        content = last_user_msg.message_dict.get("content", "")
+        preview = content[:200] + "..." if len(content) > 200 else content
+        io.tool_output(f"Regenerating response to: {preview}")
 
         coder._regenerate_next = True
         return format_command_result(io, "regenerate", "Regenerating last response")
