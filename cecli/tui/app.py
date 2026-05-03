@@ -634,6 +634,13 @@ class TUI(App):
             self._open_editor_suspended(initial_content)
             return
 
+        # Intercept /edit-history to handle with TUI suspension
+        if stripped == "/edit-history":
+            input_area = self.query_one("#input", InputArea)
+            input_area.value = ""
+            self._open_edit_history_suspended()
+            return
+
         # Save to history before clearing
         input_area = self.query_one("#input", InputArea)
         input_area.save_to_history(user_input)
@@ -772,6 +779,44 @@ class TUI(App):
             input_area.focus()
 
         return edited_text
+
+    def _open_edit_history_suspended(self):
+        """Open the conversation history in an external editor with TUI suspension."""
+        editor = getattr(self.worker.coder.commands, "editor", None)
+
+        from cecli.commands.edit_history import EditHistoryCommand
+
+        history_json = EditHistoryCommand._get_history_json(self.worker.coder)
+
+        with self.suspend():
+            edited_content = pipe_editor(history_json, suffix="json", editor=editor)
+
+        if edited_content.strip() == history_json.strip():
+            try:
+                status_bar = self.query_one("#status-bar", StatusBar)
+                status_bar.show_notification(
+                    "No changes made to history", severity="information", timeout=2
+                )
+            except Exception:
+                pass
+            return
+
+        result = EditHistoryCommand._apply_history_edits(
+            self.worker.coder.io, self.worker.coder, edited_content
+        )
+
+        try:
+            status_bar = self.query_one("#status-bar", StatusBar)
+            if result and "Error" not in str(result):
+                status_bar.show_notification(
+                    "History updated successfully", severity="information", timeout=2
+                )
+            else:
+                status_bar.show_notification(
+                    "Failed to update history", severity="error", timeout=5
+                )
+        except Exception:
+            pass
 
     def get_response_from_editor(self, initial_content=""):
         """Open an external editor with proper TUI suspension.
