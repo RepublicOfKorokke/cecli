@@ -24,6 +24,7 @@ from .copy_context import CopyContextCommand
 from .core import Commands, SwitchCoderSignal
 from .diff import DiffCommand
 from .drop import DropCommand
+from .edit_history import EditHistoryCommand
 from .editor import EditCommand, EditorCommand
 from .editor_model import EditorModelCommand
 from .exit import ExitCommand
@@ -50,6 +51,7 @@ from .quit import QuitCommand
 from .read_only import ReadOnlyCommand
 from .read_only_stub import ReadOnlyStubCommand
 from .reasoning_effort import ReasoningEffortCommand
+from .regenerate import RegenerateCommand
 from .remove_hook import RemoveHookCommand
 from .remove_mcp import RemoveMcpCommand
 from .remove_skill import RemoveSkillCommand
@@ -102,6 +104,7 @@ CommandRegistry.register(CopyContextCommand)
 CommandRegistry.register(DiffCommand)
 CommandRegistry.register(DropCommand)
 CommandRegistry.register(EditCommand)
+CommandRegistry.register(EditHistoryCommand)
 CommandRegistry.register(EditorCommand)
 CommandRegistry.register(EditorModelCommand)
 CommandRegistry.register(ExitCommand)
@@ -128,6 +131,7 @@ CommandRegistry.register(QuitCommand)
 CommandRegistry.register(ReadOnlyCommand)
 CommandRegistry.register(ReadOnlyStubCommand)
 CommandRegistry.register(ReasoningEffortCommand)
+CommandRegistry.register(RegenerateCommand)
 CommandRegistry.register(RemoveHookCommand)
 CommandRegistry.register(RemoveMcpCommand)
 CommandRegistry.register(RemoveSkillCommand)
@@ -173,6 +177,7 @@ __all__ = [
     "DiffCommand",
     "DropCommand",
     "EditCommand",
+    "EditHistoryCommand",
     "EditorCommand",
     "EditorModelCommand",
     "ExitCommand",
@@ -205,6 +210,7 @@ __all__ = [
     "ReadOnlyCommand",
     "ReadOnlyStubCommand",
     "ReasoningEffortCommand",
+    "RegenerateCommand",
     "RemoveHookCommand",
     "RemoveMcpCommand",
     "RemoveSkillCommand",

@@ -414,6 +414,25 @@ class ConversationManager:
         messages = [msg for msg in self._messages if msg.tag == tag_str]
         return self.base_sort(messages)
 
+    def remove_message(self, message: "BaseMessage") -> bool:
+        """
+        Remove a specific message from the manager.
+
+        Args:
+            message: The BaseMessage instance to remove
+
+        Returns:
+            True if message was found and removed, False otherwise
+        """
+        if message not in self._messages:
+            return False
+
+        self._messages.remove(message)
+        del self._message_index[message.message_id]
+        self._tag_cache.pop(message.tag, None)
+        self._tag_cache.pop(self._ALL_MESSAGES_CACHE_KEY, None)
+        return True
+
     def decrement_message_markers(self) -> None:
         """Decrement all mark_for_delete values, remove expired messages."""
         messages_to_remove = []

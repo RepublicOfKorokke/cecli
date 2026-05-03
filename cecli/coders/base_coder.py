@@ -1257,6 +1257,7 @@ class Coder:
         self.test_outcome = None
         self.shell_commands = []
         self.message_cost = 0
+        self._regenerate_next = False
 
         if self.repo:
             self.commit_before_message.append(self.repo.get_head_commit_sha())
@@ -1604,7 +1605,10 @@ class Coder:
         else:
             message = user_message
 
-        if self.commands.is_command(user_message) and not self.commands.is_test_command(
+        if getattr(self, '_regenerate_next', False):
+            self._regenerate_next = False
+            message = None
+        elif self.commands.is_command(user_message) and not self.commands.is_test_command(
             user_message
         ):
             return
