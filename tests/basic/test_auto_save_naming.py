@@ -173,7 +173,7 @@ async def test_fallback_file_removed_after_computed_save(mock_args):
         await coder._compute_auto_save_session_name()
 
         computed_name = coder._get_auto_save_session_name()
-        ts = coder._session_start_time.strftime("%Y%m%d_%H%M%S")
+        ts = coder._session_naming_state.start_time.strftime("%Y%m%d_%H%M%S")
 
         from cecli.sessions import SessionManager
 
@@ -191,3 +191,53 @@ async def test_fallback_file_removed_after_computed_save(mock_args):
 
         assert computed.exists(), "Computed-name session file should exist"
         assert not fallback.exists(), "Fallback file should be deleted after computed save"
+
+
+async def test_session_naming_state_shared_across_coders(mock_args):
+    """Creating a new coder from an existing one shares the same naming state."""
+    with GitTemporaryDirectory():
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        model = Model("gpt-3.5-turbo")
+        coder_a = await Coder.create(model, None, io, args=mock_args)
+
+        # Compute name on coder A
+        coder_a.summarizer.summarize_all_as_text = AsyncMock(return_value="shared state")
+        manager = ConversationService.get_manager(coder_a)
+        manager.add_message({"role": "user", "content": "Hello"}, tag=MessageTag.CUR)
+        manager.add_message({"role": "assistant", "content": "Hi."}, tag=MessageTag.CUR)
+        await coder_a._compute_auto_save_session_name()
+
+        name_a = coder_a._get_auto_save_session_name()
+
+        # Create coder B from coder A (simulates a mode switch)
+        coder_b = await Coder.create(from_coder=coder_a)
+
+        # coder_b should immediately see the same computed name
+        name_b = coder_b._get_auto_save_session_name()
+        assert name_a == name_b
+
+        # The underlying state object should be identical
+        assert coder_a._session_naming_state is coder_b._session_naming_state
+
+
+async def test_session_naming_no_redundant_summary_after_switch(mock_args):
+    """After a mode switch, the summarizer is not invoked again if already computed."""
+    with GitTemporaryDirectory():
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        model = Model("gpt-3.5-turbo")
+        coder_a = await Coder.create(model, None, io, args=mock_args)
+
+        coder_a.summarizer.summarize_all_as_text = AsyncMock(return_value="no duplicate")
+        manager = ConversationService.get_manager(coder_a)
+        manager.add_message({"role": "user", "content": "Test"}, tag=MessageTag.CUR)
+        manager.add_message({"role": "assistant", "content": "OK."}, tag=MessageTag.CUR)
+        await coder_a._compute_auto_save_session_name()
+
+        # Create coder B from A
+        coder_b = await Coder.create(from_coder=coder_a)
+
+        # Trigger computation on B — should be a no-op because state is shared
+        await coder_b._compute_auto_save_session_name()
+
+        # Summarizer was only called once (by coder A)
+        coder_a.summarizer.summarize_all_as_text.assert_awaited_once()
