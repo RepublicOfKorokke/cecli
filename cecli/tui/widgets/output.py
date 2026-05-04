@@ -9,6 +9,7 @@ from rich.padding import Padding
 from rich.style import Style as RichStyle
 from rich.text import Text
 from textual import events, on
+from textual.geometry import Size
 from textual.message import Message
 from textual.widgets import RichLog
 
@@ -45,6 +46,10 @@ class OutputContainer(RichLog):
         self._line_buffer = ""
         # Track if we're on the first line of the current response
         self._first_line_of_response = True
+        # Accumulate the full response text for final markdown rendering
+        self._response_text = ""
+        # Track the number of RichLog lines before the current response started
+        self._response_start_lines = 0
 
         # Enable markup for rich formatting
         self.highlight = True
@@ -58,6 +63,10 @@ class OutputContainer(RichLog):
         self._line_buffer = ""
         # Reset first line flag
         self._first_line_of_response = True
+        # Reset response accumulator
+        self._response_text = ""
+        # Remember how many lines exist before this response
+        self._response_start_lines = len(self.lines)
 
     def _wrap_text_with_prefix(self, text: str, prefix: str = "• ") -> str:
         """Wrap text with prefix and proper indentation.
@@ -92,26 +101,23 @@ class OutputContainer(RichLog):
         self.set_last_write_type("assistant")
         # Check for cost updates in the text
         self._check_cost(text)
+        # Accumulate full response text for final markdown render
+        self._response_text += text
         # Add text to line buffer
         self._line_buffer += text
 
         # Process complete lines from buffer
+        # During streaming we show plain text with prefixes so the user sees
+        # progress in real time.  The full response will be re-rendered as a
+        # single Markdown object when the stream ends.
         while "\n" in self._line_buffer:
             line, self._line_buffer = self._line_buffer.split("\n", 1)
             if line.rstrip():
-                # Format with prefix on first line, proper indentation on subsequent lines
                 if self._first_line_of_response:
-                    wrapped_line = self._wrap_text_with_prefix(line.rstrip(), prefix="• ")
+                    self.output("• " + line.rstrip(), render_markdown=False)
                     self._first_line_of_response = False
                 else:
-                    # For subsequent lines, we need to wrap with proper indentation
-                    # but without the bullet prefix
-                    wrapped_line = self._wrap_text_with_prefix(line.rstrip(), prefix="  ")
-
-                # Output each wrapped line
-                for wrapped in wrapped_line.split("\n"):
-                    if wrapped.strip():
-                        self.output(escape(wrapped), render_markdown=True)
+                    self.output("  " + line.rstrip(), render_markdown=False)
 
     async def end_response(self):
         """End the current LLM response."""
@@ -119,19 +125,41 @@ class OutputContainer(RichLog):
 
     async def _stop_stream(self):
         """Stop the current markdown stream."""
-        # Flush any remaining buffer content
+        # Flush any remaining buffer content as plain text
         if self._line_buffer.rstrip():
-            # Format remaining content based on whether it's first line or not
             if self._first_line_of_response:
-                wrapped_line = self._wrap_text_with_prefix(self._line_buffer.rstrip(), prefix="• ")
+                self.output("• " + self._line_buffer.rstrip(), render_markdown=False)
             else:
-                wrapped_line = self._wrap_text_with_prefix(self._line_buffer.rstrip(), prefix="  ")
-
-            # Output each wrapped line
-            for wrapped in wrapped_line.split("\n"):
-                if wrapped.strip():
-                    self.output(wrapped, render_markdown=True)
+                self.output("  " + self._line_buffer.rstrip(), render_markdown=False)
             self._line_buffer = ""
+
+        # If markdown rendering is enabled, replace the streamed plain-text
+        # lines with a single properly-rendered Markdown object.
+        if (
+            self._response_text.strip()
+            and hasattr(self.app, "render_markdown")
+            and self.app.render_markdown
+        ):
+            # Remove the streamed plain-text lines
+            self.lines = self.lines[: self._response_start_lines]
+            # Clear caches so Textual re-renders correctly
+            self._line_cache.clear()
+            if hasattr(self, "_deferred_renders"):
+                self._deferred_renders.clear()
+            # Recalculate widest line from remaining lines
+            self._widest_line_width = 0
+            for strip in self.lines:
+                self._widest_line_width = max(self._widest_line_width, strip.cell_length)
+            self.virtual_size = Size(self._widest_line_width, len(self.lines))
+
+            self.output("\n\n")
+            self.output("─" * strip.cell_length)
+            self.output("\n\n")
+
+            self.refresh()
+
+            # Render the full accumulated response as a single Markdown object
+            self.output(Markdown(self._response_text), render_markdown=False)
 
     def add_user_message(self, text: str):
         """Add a user message (displayed differently from LLM output)."""
