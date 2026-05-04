@@ -3532,9 +3532,10 @@ class Coder:
 
         tokens_report = f"{tokens_str} ↑ {format_tokens(completion_tokens)} ↓"
 
-        tokens_report = self.token_profiler.add_to_usage_report(
-            tokens_report, self.message_tokens_sent, self.message_tokens_received
-        )
+        self.token_profiler.set_token_counts(prompt_tokens, completion_tokens)
+        speed_summary = self.token_profiler.get_speed_summary()
+        if speed_summary:
+            tokens_report = speed_summary + "\n" + tokens_report
 
         if not self.get_active_model().info.get("input_cost_per_token"):
             self.usage_report = tokens_report
@@ -3617,10 +3618,8 @@ class Coder:
         self.total_tokens_sent += self.message_tokens_sent
         self.total_tokens_received += self.message_tokens_received
 
-        if self.tui and self.tui():
-            self.tui().update_cost(self.usage_report.replace("\n", " "))
-        else:
-            self.io.tool_output(self.usage_report)
+        self.io.tool_output(self.usage_report)
+        if not (self.tui and self.tui()):
             self.io.rule()
 
         self.message_cost = 0.0
