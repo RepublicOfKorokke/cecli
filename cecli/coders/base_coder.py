@@ -4031,6 +4031,14 @@ class Coder:
         if not getattr(self.args, "auto_save", False):
             return
 
+        # Don't save empty sessions — prevents /reset and /clear from corrupting files
+        manager = ConversationService.get_manager(self)
+        done = manager.get_messages_dict(MessageTag.DONE)
+        cur = manager.get_messages_dict(MessageTag.CUR)
+        if not done and not cur:
+            self.io.tool_output("Skipping auto-save: no chat history to save.")
+            return
+
         # Initialize last autosave time if not exists
         if not hasattr(self, "_last_autosave_time"):
             self._last_autosave_time = 0

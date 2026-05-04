@@ -1,3 +1,4 @@
+import json
 import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -278,3 +279,71 @@ async def test_clear_updates_session_timestamp(mock_args):
         new_ts = coder._session_naming_state.start_time
         assert new_ts > original_ts, "Timestamp should be updated after /clear"
         assert coder._session_naming_state.computed_name is None
+
+
+async def test_auto_save_skips_empty_session(mock_args):
+    """auto_save_session skips when there are no messages."""
+    with GitTemporaryDirectory():
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        model = Model("gpt-3.5-turbo")
+        coder = await Coder.create(model, None, io, args=mock_args)
+
+        # Clear all messages
+        ConversationService.get_manager(coder).reset()
+
+        # Force auto-save should skip without error
+        await coder.auto_save_session(force=True)
+
+        # No session file should be created
+        from cecli.sessions import SessionManager
+
+        sm = SessionManager(coder, io)
+        session_dir = sm._get_session_directory()
+        assert not list(session_dir.glob("*.json")), "No files should be created for empty session"
+
+
+async def test_auto_save_skips_empty_chat_with_system_messages(mock_args):
+    """auto_save_session skips when DONE/CUR are empty even if SYSTEM messages exist."""
+    with GitTemporaryDirectory():
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        model = Model("gpt-3.5-turbo")
+        coder = await Coder.create(model, None, io, args=mock_args)
+
+        # Add a user message so a session file gets created
+        manager = ConversationService.get_manager(coder)
+        manager.add_message({"role": "user", "content": "Hello"}, tag=MessageTag.CUR)
+
+        # Save once to create the file
+        await coder.auto_save_session(force=True)
+
+        # Wait for the background executor to finish
+        if coder._autosave_future:
+            await coder._autosave_future
+
+        from cecli.sessions import SessionManager
+
+        sm = SessionManager(coder, io)
+        session_dir = sm._get_session_directory()
+        files_before = list(session_dir.glob("*.json"))
+        assert len(files_before) == 1, "One session file should exist"
+
+        # Simulate /reset: clear DONE/CUR but keep SYSTEM messages
+        manager.reset()
+        manager.initialize(reformat=True)
+
+        # Verify SYSTEM messages exist but DONE/CUR are empty
+        assert manager.get_messages_dict(MessageTag.SYSTEM), "SYSTEM messages should exist"
+        assert not manager.get_messages_dict(MessageTag.DONE), "DONE should be empty"
+        assert not manager.get_messages_dict(MessageTag.CUR), "CUR should be empty"
+
+        # Force auto-save should skip
+        await coder.auto_save_session(force=True)
+
+        # The existing file should NOT be overwritten with empty data
+        files_after = list(session_dir.glob("*.json"))
+        assert len(files_after) == 1, "Same file should exist, no new files"
+
+        # Verify file still has the original chat history
+        with open(files_after[0], "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert data["chat_history"]["cur_messages"], "File should still have original chat history"
