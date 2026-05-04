@@ -21,6 +21,11 @@ class ClearCommand(BaseCommand):
         ConversationService.get_files(coder).reset()
         coder.observation_manager.reset()
 
+        # Reset session naming state so the next save starts a new session
+        from cecli.coders.base_coder import SessionNamingState
+
+        coder._session_naming_state = SessionNamingState()
+
         # Clear TUI output if available
         if coder.tui and coder.tui():
             coder.tui().action_clear_output()

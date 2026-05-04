@@ -53,6 +53,7 @@ class ResetCommand(BaseCommand):
                 edit_format=coder.edit_format,
                 summarize_from_coder=False,
                 from_coder=coder,
+                session_naming_state=None,
                 map_tokens=map_tokens,
                 map_mul_no_files=map_mul_no_files,
                 show_announcements=False,

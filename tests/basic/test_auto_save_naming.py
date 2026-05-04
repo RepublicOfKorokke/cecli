@@ -241,3 +241,40 @@ async def test_session_naming_no_redundant_summary_after_switch(mock_args):
 
         # Summarizer was only called once (by coder A)
         coder_a.summarizer.summarize_all_as_text.assert_awaited_once()
+
+
+async def test_reset_creates_new_session_timestamp(mock_args):
+    """/reset command creates a new coder with a fresh timestamp."""
+    with GitTemporaryDirectory():
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        model = Model("gpt-3.5-turbo")
+        coder = await Coder.create(model, None, io, args=mock_args)
+
+        # Simulate /reset by raising SwitchCoderSignal with session_naming_state=None
+        from cecli.commands import SwitchCoderSignal
+
+        with pytest.raises(SwitchCoderSignal) as exc_info:
+            from cecli.commands.reset import ResetCommand
+
+            await ResetCommand.execute(io, coder, "")
+
+        switch = exc_info.value
+        assert switch.kwargs.get("session_naming_state") is None
+
+
+async def test_clear_updates_session_timestamp(mock_args):
+    """/clear command resets the session naming state in place."""
+    with GitTemporaryDirectory():
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        model = Model("gpt-3.5-turbo")
+        coder = await Coder.create(model, None, io, args=mock_args)
+
+        original_ts = coder._session_naming_state.start_time
+
+        from cecli.commands.clear import ClearCommand
+
+        await ClearCommand.execute(io, coder, "")
+
+        new_ts = coder._session_naming_state.start_time
+        assert new_ts > original_ts, "Timestamp should be updated after /clear"
+        assert coder._session_naming_state.computed_name is None
