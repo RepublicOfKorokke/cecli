@@ -89,6 +89,15 @@ class FinishReasonLength(Exception):
     pass
 
 
+class SessionNamingState:
+    """Shared mutable state for session naming across coder switches."""
+
+    def __init__(self):
+        self.start_time = datetime.now()
+        self.computed_name = None
+        self.lock = asyncio.Lock()
+
+
 def wrap_fence(name):
     return f"<{name}>", f"</{name}>"
 
@@ -229,6 +238,7 @@ class Coder:
                 total_tokens_received=from_coder.total_tokens_received,
                 file_watcher=from_coder.file_watcher,
                 mcp_manager=from_coder.mcp_manager,
+                session_naming_state=from_coder._session_naming_state,
                 uuid=from_coder.uuid,
                 repo=from_coder.repo,
             )
@@ -327,6 +337,7 @@ class Coder:
         repomap_in_memory=False,
         linear_output=False,
         security_config=None,
+        session_naming_state=None,
         uuid="",
     ):
         # initialize from args.map_cache_dir
@@ -566,10 +577,8 @@ class Coder:
         self.summarized_done_messages = []
         self.summarizing_messages = None
 
-        # Session auto-save naming state
-        self._session_start_time = datetime.now()
-        self._auto_save_session_computed_name = None
-        self._auto_save_name_lock = asyncio.Lock()
+        # Session auto-save naming state (shared across coder switches)
+        self._session_naming_state = session_naming_state or SessionNamingState()
 
         self.files_edited_by_tools = set()
 
@@ -4055,14 +4064,14 @@ class Coder:
 
     def _get_auto_save_session_name(self) -> str:
         """Return the computed auto-save session name, or the timestamp fallback."""
-        if self._auto_save_session_computed_name is not None:
-            return self._auto_save_session_computed_name
-        return self._session_start_time.strftime(SESSION_TIMESTAMP_FORMAT)
+        if self._session_naming_state.computed_name is not None:
+            return self._session_naming_state.computed_name
+        return self._session_naming_state.start_time.strftime(SESSION_TIMESTAMP_FORMAT)
 
     async def _compute_auto_save_session_name(self):
         """Compute the auto-save session name once using the weak model, then cache it."""
-        async with self._auto_save_name_lock:
-            if self._auto_save_session_computed_name is not None:
+        async with self._session_naming_state.lock:
+            if self._session_naming_state.computed_name is not None:
                 return
 
             manager = ConversationService.get_manager(self)
@@ -4090,17 +4099,17 @@ class Coder:
             if not summary:
                 summary = "chat"
 
-            ts = self._session_start_time.strftime(SESSION_TIMESTAMP_FORMAT)
-            self._auto_save_session_computed_name = f"{ts}_{summary}"
+            ts = self._session_naming_state.start_time.strftime(SESSION_TIMESTAMP_FORMAT)
+            self._session_naming_state.computed_name = f"{ts}_{summary}"
 
     def _do_save_and_cleanup(self, session_name):
         """Save session and remove timestamp fallback if computed name succeeded."""
         session_manager = SessionManager(self, self.io)
         success = session_manager.save_session(session_name, output=False)
 
-        if success and self._auto_save_session_computed_name is not None:
+        if success and self._session_naming_state.computed_name is not None:
             try:
-                ts = self._session_start_time.strftime(SESSION_TIMESTAMP_FORMAT)
+                ts = self._session_naming_state.start_time.strftime(SESSION_TIMESTAMP_FORMAT)
                 fallback = session_manager.get_session_file_path(ts)
                 if fallback.exists():
                     fallback.unlink()
