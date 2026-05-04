@@ -8,6 +8,8 @@ from typing import Dict, List, Optional
 from cecli import models
 from cecli.helpers.conversation import ConversationService, MessageTag
 
+SESSION_TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
+
 
 class SessionManager:
     """Manages chat session saving, listing, and loading."""
@@ -21,6 +23,11 @@ class SessionManager:
         session_dir = Path(self.coder.abs_root_path(".cecli/sessions"))
         os.makedirs(session_dir, exist_ok=True)
         return session_dir
+
+    def get_session_file_path(self, session_name: str) -> Path:
+        if not session_name:
+            raise ValueError("Session name cannot be empty")
+        return self._get_session_directory() / f"{session_name}.json"
 
     def save_session(self, session_name: str, output=True) -> bool:
         """Save the current chat session to a named file."""

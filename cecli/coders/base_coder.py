@@ -61,7 +61,7 @@ from cecli.repo import ANY_GIT_ERROR, GitRepo
 from cecli.repomap import RepoMap
 from cecli.report import update_error_prefix
 from cecli.run_cmd import run_cmd
-from cecli.sessions import SessionManager
+from cecli.sessions import SESSION_TIMESTAMP_FORMAT, SessionManager
 from cecli.tools.utils.output import print_tool_response
 from cecli.tools.utils.registry import ToolRegistry
 from cecli.utils import copy_tool_call, format_tokens, is_image_file
@@ -4043,13 +4043,11 @@ class Coder:
         if current_time - self._last_autosave_time >= 15.0 or force:
             try:
                 self._last_autosave_time = current_time
-                session_manager = SessionManager(self, self.io)
                 loop = asyncio.get_running_loop()
                 self._autosave_future = loop.run_in_executor(
                     None,
-                    session_manager.save_session,
+                    self._do_save_and_cleanup,
                     self._get_auto_save_session_name(),
-                    False,
                 )
             except Exception:
                 # Don't show errors for auto-save to avoid interrupting the user experience
@@ -4059,7 +4057,7 @@ class Coder:
         """Return the computed auto-save session name, or the timestamp fallback."""
         if self._auto_save_session_computed_name is not None:
             return self._auto_save_session_computed_name
-        return self._session_start_time.strftime("%Y%m%d_%H%M%S")
+        return self._session_start_time.strftime(SESSION_TIMESTAMP_FORMAT)
 
     async def _compute_auto_save_session_name(self):
         """Compute the auto-save session name once using the weak model, then cache it."""
@@ -4092,8 +4090,22 @@ class Coder:
             if not summary:
                 summary = "chat"
 
-            ts = self._session_start_time.strftime("%Y%m%d_%H%M%S")
+            ts = self._session_start_time.strftime(SESSION_TIMESTAMP_FORMAT)
             self._auto_save_session_computed_name = f"{ts}_{summary}"
+
+    def _do_save_and_cleanup(self, session_name):
+        """Save session and remove timestamp fallback if computed name succeeded."""
+        session_manager = SessionManager(self, self.io)
+        success = session_manager.save_session(session_name, output=False)
+
+        if success and self._auto_save_session_computed_name is not None:
+            try:
+                ts = self._session_start_time.strftime(SESSION_TIMESTAMP_FORMAT)
+                fallback = session_manager.get_session_file_path(ts)
+                if fallback.exists():
+                    fallback.unlink()
+            except Exception:
+                pass
 
     async def run_shell_commands(self):
         if not self.suggest_shell_commands:
