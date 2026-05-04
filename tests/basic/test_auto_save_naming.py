@@ -143,3 +143,51 @@ async def test_auto_save_name_empty_summary_fallback(mock_args):
         name = coder._get_auto_save_session_name()
         assert re.match(r"^\d{8}_\d{6}_[a-z0-9-]+$", name), f"Unexpected name: {name}"
         assert name.endswith("_chat")
+
+
+async def test_get_session_file_path_rejects_empty_name(mock_args):
+    """get_session_file_path raises ValueError for empty session names."""
+    with GitTemporaryDirectory():
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        model = Model("gpt-3.5-turbo")
+        coder = await Coder.create(model, None, io, args=mock_args)
+        from cecli.sessions import SessionManager
+
+        sm = SessionManager(coder, io)
+        with pytest.raises(ValueError, match="Session name cannot be empty"):
+            sm.get_session_file_path("")
+
+
+async def test_fallback_file_removed_after_computed_save(mock_args):
+    """After a successful computed-name save, the timestamp fallback is deleted."""
+    with GitTemporaryDirectory():
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        model = Model("gpt-3.5-turbo")
+        coder = await Coder.create(model, None, io, args=mock_args)
+
+        # Compute the name first
+        coder.summarizer.summarize_all_as_text = AsyncMock(return_value="task done")
+        manager = ConversationService.get_manager(coder)
+        manager.add_message({"role": "user", "content": "Do task"}, tag=MessageTag.CUR)
+        manager.add_message({"role": "assistant", "content": "Done."}, tag=MessageTag.CUR)
+        await coder._compute_auto_save_session_name()
+
+        computed_name = coder._get_auto_save_session_name()
+        ts = coder._session_start_time.strftime("%Y%m%d_%H%M%S")
+
+        from cecli.sessions import SessionManager
+
+        sm = SessionManager(coder, io)
+        fallback = sm.get_session_file_path(ts)
+        computed = sm.get_session_file_path(computed_name)
+
+        # Create the fallback file on disk
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        fallback.write_text("{}", encoding="utf-8")
+        assert fallback.exists()
+
+        # Trigger the save-and-cleanup
+        coder._do_save_and_cleanup(computed_name)
+
+        assert computed.exists(), "Computed-name session file should exist"
+        assert not fallback.exists(), "Fallback file should be deleted after computed save"
