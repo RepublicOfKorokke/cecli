@@ -4,6 +4,15 @@ import time
 from typing import Optional
 
 
+def _format_tokens(count: int) -> str:
+    if count < 1000:
+        return f"{count}"
+    elif count < 10000:
+        return f"{count / 1000:.1f}k"
+    else:
+        return f"{round(count / 1000)}k"
+
+
 class TokenProfiler:
     """
     A profiler for tracking LLM token timing metrics with minimal interface.
@@ -118,6 +127,22 @@ class TokenProfiler:
                     report += "\nSpeed: " + ", ".join(speed_parts)
 
         return report
+
+    def get_speed_summary(self) -> Optional[str]:
+        """Return a compact single-line speed summary (only if enabled)."""
+        if not self._enabled or not self._start_time or not self._has_seen_first_token:
+            return None
+
+        elapsed = (self._end_time or time.time()) - self._start_time
+        ttft = self._first_token_time - self._start_time
+        parts = [f"{ttft:.2f}s TTFT"]
+
+        gen_time = elapsed - ttft
+        if gen_time > 0 and self._output_tokens > 0:
+            parts.append(f"{self._output_tokens / gen_time:.1f} tps")
+
+        parts.append(f"{elapsed:.2f}s total")
+        return " • ".join(parts)
 
     def get_elapsed(self) -> Optional[float]:
         """
