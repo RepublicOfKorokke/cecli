@@ -1641,7 +1641,7 @@ class Coder:
 
             if not self.empty_response:
                 if not self.reflected_message:
-                    await self._compute_auto_save_session_name()
+                    asyncio.create_task(self._compute_auto_save_session_name())
                     await self.auto_save_session(force=True)
                     break
 
@@ -4053,10 +4053,10 @@ class Coder:
                 pass
 
     def _get_auto_save_session_name(self) -> str:
-        """Return the computed auto-save session name, or the CLI fallback."""
+        """Return the computed auto-save session name, or the timestamp fallback."""
         if self._auto_save_session_computed_name is not None:
             return self._auto_save_session_computed_name
-        return getattr(self.args, "auto_save_session_name", "auto-save") or "auto-save"
+        return self._session_start_time.strftime("%Y%m%d_%H%M%S")
 
     async def _compute_auto_save_session_name(self):
         """Compute the auto-save session name once using the weak model, then cache it."""

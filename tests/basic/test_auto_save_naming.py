@@ -20,12 +20,13 @@ def mock_args():
 
 
 async def test_auto_save_name_fallback_before_first_turn(mock_args):
-    """Before any assistant reply, the fallback name is used."""
+    """Before any assistant reply, the timestamp fallback name is used."""
     with GitTemporaryDirectory():
         io = InputOutput(pretty=False, fancy_input=False, yes=True)
         model = Model("gpt-3.5-turbo")
         coder = await Coder.create(model, None, io, args=mock_args)
-        assert coder._get_auto_save_session_name() == "auto-save"
+        name = coder._get_auto_save_session_name()
+        assert re.match(r"^\d{8}_\d{6}$", name), f"Unexpected fallback name: {name}"
 
 
 async def test_auto_save_name_computed_after_first_turn(mock_args):
