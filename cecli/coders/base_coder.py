@@ -566,6 +566,11 @@ class Coder:
         self.summarized_done_messages = []
         self.summarizing_messages = None
 
+        # Session auto-save naming state
+        self._session_start_time = datetime.now()
+        self._auto_save_session_computed_name = None
+        self._auto_save_name_lock = asyncio.Lock()
+
         self.files_edited_by_tools = set()
 
         # Linting and testing
@@ -1640,6 +1645,7 @@ class Coder:
 
             if not self.empty_response:
                 if not self.reflected_message:
+                    await self._compute_auto_save_session_name()
                     await self.auto_save_session(force=True)
                     break
 
@@ -4042,12 +4048,52 @@ class Coder:
                 self._autosave_future = loop.run_in_executor(
                     None,
                     session_manager.save_session,
-                    getattr(self.args, "auto_save_session_name", "auto-save"),
+                    self._get_auto_save_session_name(),
                     False,
                 )
             except Exception:
                 # Don't show errors for auto-save to avoid interrupting the user experience
                 pass
+
+    def _get_auto_save_session_name(self) -> str:
+        """Return the computed auto-save session name, or the CLI fallback."""
+        if self._auto_save_session_computed_name is not None:
+            return self._auto_save_session_computed_name
+        return getattr(self.args, "auto_save_session_name", "auto-save") or "auto-save"
+
+    async def _compute_auto_save_session_name(self):
+        """Compute the auto-save session name once using the weak model, then cache it."""
+        async with self._auto_save_name_lock:
+            if self._auto_save_session_computed_name is not None:
+                return
+
+            manager = ConversationService.get_manager(self)
+            cur_messages = manager.get_messages_dict(MessageTag.CUR)
+
+            # Only compute after the first assistant reply
+            if not any(m.get("role") == "assistant" for m in cur_messages):
+                return
+
+            try:
+                summary = await self.summarizer.summarize_all_as_text(
+                    cur_messages.copy(),
+                    prompt=(
+                        "Summarize this first programming conversation turn in 5-10 words. "
+                        "Use only lowercase letters, numbers, and hyphens. "
+                        "No punctuation, markdown, or explanation."
+                    ),
+                    max_tokens=1000,
+                )
+            except Exception:
+                return
+
+            summary = re.sub(r"[^\w\s-]", "", summary or "")
+            summary = re.sub(r"[-\s]+", "-", summary).strip("-").lower()
+            if not summary:
+                summary = "chat"
+
+            ts = self._session_start_time.strftime("%Y%m%d_%H%M%S")
+            self._auto_save_session_computed_name = f"{ts}_{summary}"
 
     async def run_shell_commands(self):
         if not self.suggest_shell_commands:
